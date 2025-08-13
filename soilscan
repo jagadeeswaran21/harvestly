@@ -1,0 +1,130 @@
+import React, { useCallback, useState } from 'react';
+import { View, Text, StyleSheet, Pressable, Image, ScrollView, ActivityIndicator, Alert } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import { useNavigation } from '@react-navigation/native';
+import { analyzeSoilImage } from '../src/lib/ai';
+import { saveRecentSearch } from '../src/lib/storage';
+
+export default function SoilScanScreen() {
+  const navigation = useNavigation<any>();
+  const [image, setImage] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<null | {
+    conditionSummary: string;
+    climateSnapshot: string;
+    recommendedCrops: string[];
+    rotationPlan: string[]; // Year 1-3 lines
+    details: string; // full narrative
+  }>(null);
+
+  const pickImage = useCallback(async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (perm.status !== 'granted') {
+      Alert.alert('Permission needed', 'Grant gallery access to pick a soil image.');
+      return;
+    }
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.7 });
+    if (!res.canceled && res.assets && res.assets.length > 0) {
+      setImage(res.assets[0].uri);
+      setResult(null);
+    }
+  }, []);
+
+  const onAnalyze = useCallback(async () => {
+    if (!image) {
+      Alert.alert('No image', 'Pick a soil image first.');
+      return;
+    }
+    setLoading(true);
+    setResult(null);
+    try {
+      const analysis = await analyzeSoilImage(image);
+      setResult(analysis);
+      await saveRecentSearch({
+        title: analysis.recommendedCrops[0] ? `Soil scan: ${analysis.recommendedCrops[0]}` : 'Soil scan',
+        subtitle: analysis.conditionSummary,
+        thumbnailUri: image,
+      });
+    } catch (e) {
+      Alert.alert('Analysis failed', 'Unable to analyze soil image right now. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }, [image]);
+
+  return (
+    <ScrollView contentContainerStyle={styles.scroll}>
+      <Text style={styles.title}>Soil Scan</Text>
+      <Text style={styles.muted}>Upload a soil photo. AI will infer soil condition, climate snapshot, recommend crops, and propose a rotation plan.</Text>
+
+      <View style={styles.card}>
+        {image ? (
+          <Image source={{ uri: image }} style={styles.preview} />
+        ) : (
+          <View style={styles.previewPlaceholder}><Text style={styles.muted}>No image selected</Text></View>
+        )}
+        <Pressable onPress={pickImage} style={({ pressed }) => [styles.button, styles.secondary, pressed && styles.pressed]}>
+          <Text style={[styles.buttonText, styles.secondaryText]}>{image ? 'Change Photo' : 'Pick from Gallery'}</Text>
+        </Pressable>
+      </View>
+
+      <Pressable onPress={onAnalyze} style={({ pressed }) => [styles.button, styles.primary, pressed && styles.pressed]}>
+        {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Analyze Soil</Text>}
+      </Pressable>
+
+      {result ? (
+        <View style={{ gap: 12 }}>
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Soil Condition</Text>
+            <Text style={styles.body}>{result.conditionSummary}</Text>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Climate Snapshot</Text>
+            <Text style={styles.body}>{result.climateSnapshot}</Text>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Recommended Crops</Text>
+            <Text style={styles.body}>{result.recommendedCrops.join(', ') || '—'}</Text>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Rotation Plan (3 years)</Text>
+            {result.rotationPlan.map((line, idx) => (
+              <Text key={idx} style={styles.body}>{line}</Text>
+            ))}
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Details</Text>
+            <Text style={styles.body}>{result.details}</Text>
+          </View>
+        </View>
+      ) : null}
+
+      <Pressable onPress={() => navigation.navigate('Home')} style={({ pressed }) => [styles.linkBtn, pressed && styles.pressed]}>
+        <Text style={styles.linkText}>Back to Dashboard</Text>
+      </Pressable>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  scroll: { padding: 16, paddingBottom: 40, backgroundColor: '#f0fdf4' },
+  title: { fontSize: 22, fontWeight: '800', color: '#14532d', marginBottom: 6 },
+  muted: { color: '#166534' },
+  card: { backgroundColor: 'white', borderRadius: 12, padding: 14, marginTop: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 6, elevation: 2 },
+  preview: { width: '100%', height: 220, borderRadius: 10, marginBottom: 10 },
+  previewPlaceholder: { width: '100%', height: 220, borderRadius: 10, backgroundColor: '#dcfce7', alignItems: 'center', justifyContent: 'center', marginBottom: 10 },
+  button: { paddingVertical: 12, paddingHorizontal: 16, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginTop: 12 },
+  primary: { backgroundColor: '#16a34a' },
+  secondary: { backgroundColor: '#e2f2e6' },
+  buttonText: { color: 'white', fontWeight: '700' },
+  secondaryText: { color: '#14532d' },
+  pressed: { opacity: 0.9 },
+  sectionTitle: { fontSize: 16, fontWeight: '700', color: '#14532d', marginBottom: 8 },
+  body: { color: '#0f172a', lineHeight: 20 },
+  linkBtn: { alignItems: 'center', marginTop: 16 },
+  linkText: { color: '#0ea5e9', fontWeight: '700' },
+});
